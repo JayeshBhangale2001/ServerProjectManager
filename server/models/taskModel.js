@@ -31,6 +31,7 @@ const taskSchema = new Schema(
         activity: String,
         date: { type: Date, default: new Date() },
         by: { type: Schema.Types.ObjectId, ref: "User" },
+        
       },
     ],
     subTasks: [
@@ -43,6 +44,9 @@ const taskSchema = new Schema(
     assets: [String],
     team: [{ type: Schema.Types.ObjectId, ref: "User" }],
     isTrashed: { type: Boolean, default: false },
+    parentTaskId: { type: mongoose.Schema.Types.ObjectId, ref: 'Task', default: null },
+    subTaskIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Task' }],
+    relatedTaskIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Task' }],
   },
   { timestamps: true }
 );

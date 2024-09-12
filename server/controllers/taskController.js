@@ -6,19 +6,14 @@ import User from "../models/userModel.js";
 const createTask = asyncHandler(async (req, res) => {
   try {
     const { userId } = req.user;
-    const { title, team, stage, date, priority, assets } = req.body;
+    const { title, team, stage, date, priority, assets, parentTaskId, subTaskIds, relatedTaskIds } = req.body;
 
-    //alert users of the task
+    // Notify users about the new task
     let text = "New task has been assigned to you";
     if (team?.length > 1) {
-      text = text + ` and ${team?.length - 1} others.`;
+      text += ` and ${team.length - 1} others.`;
     }
-
-    text =
-      text +
-      ` The task priority is set a ${priority} priority, so check and act accordingly. The task date is ${new Date(
-        date
-      ).toDateString()}. Thank you!!!`;
+    text += ` The task priority is set to ${priority} priority, and the due date is ${new Date(date).toDateString()}. Thank you!`;
 
     const activity = {
       type: "assigned",
@@ -34,17 +29,28 @@ const createTask = asyncHandler(async (req, res) => {
       priority: priority.toLowerCase(),
       assets,
       activities: activity,
+      parentTaskId: parentTaskId || null, // If there's a parent task, set it here
+      subTaskIds: subTaskIds || [], // If subtasks are passed in, link them
+      relatedTaskIds: relatedTaskIds || [], // If related tasks are passed in, link them
     });
 
+    // Update the parent task with the new subtask if a parent task is provided
+    if (parentTaskId) {
+      const parentTask = await Task.findById(parentTaskId);
+      if (parentTask) {
+        parentTask.subTaskIds.push(task._id); // Add the newly created task as a subtask of the parent task
+        await parentTask.save();
+      }
+    }
+
+    // Create notification
     await Notice.create({
       team,
       text,
       task: task._id,
     });
 
-    res
-      .status(200)
-      .json({ status: true, task, message: "Task created successfully." });
+    res.status(200).json({ status: true, task, message: "Task created successfully." });
   } catch (error) {
     console.log(error);
     return res.status(400).json({ status: false, message: error.message });
@@ -150,29 +156,73 @@ const updateTaskStage = asyncHandler(async (req, res) => {
 });
 
 const createSubTask = asyncHandler(async (req, res) => {
-  const { title, tag, date } = req.body;
-  const { id } = req.params;
+  const { title, tag, date, subTaskId } = req.body; // subTaskId is for choosing an existing subtask
+  const { id } = req.params; // The parent task ID
 
   try {
-    const newSubTask = {
-      title,
-      date,
-      tag,
-    };
+    const task = await Task.findById(id); // The parent task
 
-    const task = await Task.findById(id);
+    if (subTaskId) {
+      // If subTaskId is provided, add the existing task as a subtask
+      task.subTaskIds.push(subTaskId);
 
-    task.subTasks.push(newSubTask);
+      const subTask = await Task.findById(subTaskId);
+      subTask.parentTaskId = task._id;
+      await subTask.save();
+    } else {
+      // If no subTaskId, create a new subtask
+      const newSubTask = await Task.create({
+        title,
+        date,
+        tag,
+        parentTaskId: task._id, // Set the parent task ID
+      });
+
+      task.subTaskIds.push(newSubTask._id); // Link the new subtask to the parent task
+    }
 
     await task.save();
 
-    res
-      .status(200)
-      .json({ status: true, message: "SubTask added successfully." });
+    res.status(200).json({ status: true, message: "SubTask added successfully." });
   } catch (error) {
     return res.status(400).json({ status: false, message: error.message });
   }
 });
+
+const addRelatedTask = asyncHandler(async (req, res) => {
+  const { relatedTaskId, title, date, priority } = req.body; // relatedTaskId is for choosing an existing task
+  const { id } = req.params; // The task ID to which the related task will be added
+
+  try {
+    const task = await Task.findById(id);
+
+    if (relatedTaskId) {
+      // Add existing task as a related task
+      task.relatedTaskIds.push(relatedTaskId);
+
+      const relatedTask = await Task.findById(relatedTaskId);
+      relatedTask.relatedTaskIds.push(task._id); // Make the relationship bidirectional
+      await relatedTask.save();
+    } else {
+      // Create a new related task
+      const newRelatedTask = await Task.create({
+        title,
+        date,
+        priority,
+        relatedTaskIds: [task._id], // Add the current task as a related task to the new task
+      });
+
+      task.relatedTaskIds.push(newRelatedTask._id); // Link the new related task
+    }
+
+    await task.save();
+
+    res.status(200).json({ status: true, message: "Related task added successfully." });
+  } catch (error) {
+    return res.status(400).json({ status: false, message: error.message });
+  }
+});
+
 
 const getTasks = asyncHandler(async (req, res) => {
   const { userId, isAdmin } = req.user;
@@ -226,6 +276,14 @@ const getTask = asyncHandler(async (req, res) => {
         path: "activities.by",
         select: "name",
       })
+      .populate({
+        path: "subTaskIds", // Populating subtasks
+        select: "title date tag",
+      })
+      .populate({
+        path: "relatedTaskIds", // Populating related tasks
+        select: "title date priority",
+      })
       .sort({ _id: -1 });
 
     res.status(200).json({
@@ -237,6 +295,7 @@ const getTask = asyncHandler(async (req, res) => {
     throw new Error("Failed to fetch task", error);
   }
 });
+
 
 const postTaskActivity = asyncHandler(async (req, res) => {
   const { id } = req.params;
@@ -397,4 +456,5 @@ export {
   trashTask,
   updateTask,
   updateTaskStage,
+  addRelatedTask,
 };
